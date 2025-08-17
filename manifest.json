@@ -1,1 +1,9 @@
-
+{
+  "name": "Easy Base Airsoft",
+  "short_name": "EBA",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#0a0f15",
+  "theme_color": "#00e5ff",
+  "icons": []
+}
