@@ -1,1 +1,127 @@
+<!doctype html>
+<html lang="hu">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EBA – Admin</title>
+<style>
+  body{margin:0;font:16px/1.5 system-ui;background:#0a0f15;color:#e6f1ff}
+  header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1420;border-bottom:1px solid #122131}
+  main{max-width:900px;margin:20px auto;padding:0 12px}
+  input,textarea,button{background:#0d1420;border:1px solid #122131;color:#e6f1ff;border-radius:10px;padding:8px 10px;width:100%}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .card{background:#0d1420;border:1px solid #122131;border-radius:12px;padding:12px;margin:10px 0}
+  .btn{background:#00e5ff;border:0;color:#06202a;padding:8px 10px;border-radius:8px;font-weight:700;cursor:pointer}
+  .danger{background:#ff4d6d;color:#230000}
+  .muted{color:#90a4b8}
+</style>
+<header>
+  <b>Easy Base Airsoft – Admin</b>
+  <nav><a class="btn" href="index.html">Publikus oldal</a></nav>
+</header>
+<main>
+  <div id="login" class="card">
+    <h3>Belépés</h3>
+    <div class="row">
+      <input id="email" placeholder="email">
+      <input id="pass" type="password" placeholder="jelszó">
+    </div>
+    <button class="btn" onclick="doLogin()">Belépés</button>
+    <div id="msg" class="muted"></div>
+  </div>
 
+  <div id="app" style="display:none">
+    <div class="card">
+      <h3>Új esemény</h3>
+      <input id="title" placeholder="Cím">
+      <textarea id="desc" rows="3" placeholder="Leírás (opcionális)"></textarea>
+      <div class="row">
+        <input id="start" type="datetime-local">
+        <input id="end" type="datetime-local">
+      </div>
+      <div class="row">
+        <input id="price" type="number" min="0" placeholder="Belépő HUF (opcionális)">
+        <input id="cap" type="number" min="0" placeholder="Kapacitás (opcionális)">
+      </div>
+      <input id="regurl" placeholder="Regisztrációs link (https://...)">
+      <input id="manual" type="number" min="0" placeholder="Manuális létszám (ha megadod, ezt mutatja)">
+      <button class="btn" onclick="createEvent()">Mentés</button>
+      <div id="emsg" class="muted"></div>
+    </div>
+
+    <div class="card">
+      <h3>Események</h3>
+      <div id="events"></div>
+    </div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="app-config.js"></script>
+<script>
+const { supabaseUrl, supabaseAnonKey } = window.APP_CONFIG;
+const supa = supabase.createClient(supabaseUrl, supabaseAnonKey);
+
+async function isAdmin(){
+  const { data:{ user } } = await supa.auth.getUser();
+  if(!user) return false;
+  const { data } = await supa.from('admins').select('uid').eq('uid', user.id).maybeSingle();
+  return !!data;
+}
+async function doLogin(){
+  msg.textContent='';
+  const { error } = await supa.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
+  if(error){ msg.textContent = error.message; return; }
+  boot();
+}
+async function boot(){
+  if(!(await isAdmin())){ msg.textContent='Nincs admin jogosultság.'; return; }
+  document.getElementById('login').style.display='none';
+  document.getElementById('app').style.display='block';
+  loadEvents();
+}
+function fmt(s){ return new Date(s).toLocaleString(); }
+
+async function createEvent(){
+  const payload = {
+    title: title.value.trim(),
+    description: desc.value.trim() || null,
+    start_ts: new Date(start.value).toISOString(),
+    end_ts: new Date(end.value).toISOString(),
+    price_huf: price.value ? Number(price.value) : null,
+    capacity: cap.value ? Number(cap.value) : null,
+    registration_url: regurl.value.trim() || null,
+    manual_count: manual.value ? Number(manual.value) : null
+  };
+  if(!payload.title || !start.value || !end.value){ emsg.textContent='Cím + időpontok kellenek.'; return; }
+  const { error } = await supa.from('events').insert(payload);
+  emsg.textContent = error ? error.message : 'Mentve.';
+  if(!error){ title.value=desc.value=price.value=cap.value=regurl.value=manual.value=''; start.value=end.value=''; loadEvents(); }
+}
+
+async function loadEvents(){
+  const { data: evs } = await supa.from('events').select('id,title,start_ts,end_ts,capacity,manual_count').order('start_ts',{ascending:true});
+  const { data: cnt } = await supa.from('event_counts').select('event_id,confirmed_count');
+  const counts = Object.fromEntries((cnt||[]).map(r=>[r.event_id, r.confirmed_count||0]));
+  events.innerHTML = (evs||[]).map(ev => {
+    const c = Number.isInteger(ev.manual_count) ? ev.manual_count : (counts[ev.id]||0);
+    return `<div style="border:1px solid #122131;border-radius:10px;padding:10px;margin:8px 0">
+      <b>${ev.title}</b> – ${fmt(ev.start_ts)} → ${fmt(ev.end_ts)} — Létszám: ${c}${ev.capacity?` / ${ev.capacity}`:''}
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button onclick="delEvent('${ev.id}')" class="danger">Törlés</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="muted">Nincs esemény.</div>';
+}
+async function delEvent(id){
+  if(!confirm('Biztos törlöd?')) return;
+  const { error } = await supa.from('events').delete().eq('id', id);
+  if(error) alert(error.message);
+  loadEvents();
+}
+
+(async ()=>{
+  const { data:{ user } } = await supa.auth.getUser();
+  if(user && await isAdmin()) boot();
+})();
+</script>
+</html>
