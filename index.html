@@ -1,1 +1,66 @@
+<!doctype html>
+<html lang="hu">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EBA – Események</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#00e5ff">
+<style>
+  body{margin:0;font:16px/1.5 system-ui;background:#0a0f15;color:#e6f1ff}
+  header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#0d1420;border-bottom:1px solid #122131}
+  main{max-width:900px;margin:20px auto;padding:0 12px}
+  .card{background:#0d1420;border:1px solid #122131;border-radius:12px;padding:12px;margin:10px 0}
+  .muted{color:#90a4b8;font-size:14px}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .btn{background:#00e5ff;border:0;color:#06202a;padding:8px 10px;border-radius:8px;font-weight:700;text-decoration:none;display:inline-block}
+</style>
+<header>
+  <b>Easy Base Airsoft – Események</b>
+  <nav><a class="btn" href="admin.html">Admin</a></nav>
+</header>
+<main>
+  <h2>Közelgő események</h2>
+  <div id="list"></div>
+</main>
 
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="app-config.js"></script>
+<script>
+const { supabaseUrl, supabaseAnonKey } = window.APP_CONFIG;
+const supa = supabase.createClient(supabaseUrl, supabaseAnonKey);
+
+const fmt = s => new Date(s).toLocaleString();
+
+async function load(){
+  const { data: evs, error } = await supa.from('events')
+    .select('id,title,description,start_ts,end_ts,price_huf,capacity,registration_url,manual_count,location:locations(name,maps_url)')
+    .gte('end_ts', new Date().toISOString())
+    .order('start_ts', { ascending:true });
+  if(error){ document.getElementById('list').innerHTML = '<p>Hiba: '+error.message+'</p>'; return; }
+
+  const { data: cnt } = await supa.from('event_counts').select('event_id,confirmed_count');
+  const counts = Object.fromEntries((cnt||[]).map(r=>[r.event_id, r.confirmed_count||0]));
+
+  document.getElementById('list').innerHTML = (evs||[]).map(ev=>{
+    const c = Number.isInteger(ev.manual_count) ? ev.manual_count : (counts[ev.id]||0);
+    return `<div class="card">
+      <h3>${ev.title}</h3>
+      <div class="muted">${fmt(ev.start_ts)} → ${fmt(ev.end_ts)}</div>
+      ${ev.location?.name ? `<div class="muted">Helyszín: ${ev.location.name} ${ev.location.maps_url?`– <a href="${ev.location.maps_url}" target="_blank">Maps</a>`:''}</div>`:''}
+      ${ev.price_huf ? `<div class="muted">Belépő: ${ev.price_huf} HUF</div>`:''}
+      <div class="muted">Létszám: ${c}${ev.capacity?` / ${ev.capacity}`:''}</div>
+      ${ev.description?`<p>${ev.description}</p>`:''}
+      ${ev.registration_url?`<a class="btn" href="${ev.registration_url}" target="_blank" rel="noopener">Regisztráció</a>`:''}
+    </div>`;
+  }).join('') || '<p class="muted">Nincs közelgő esemény.</p>';
+
+  // realtime frissítés a számlálóra
+  supa.channel('live-regs').on('postgres_changes',
+    {event:'*', schema:'public', table:'registrations'},
+    () => load()).subscribe();
+}
+
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+load();
+</script>
+</html>
